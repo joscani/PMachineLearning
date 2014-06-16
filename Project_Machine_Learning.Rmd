@@ -1,0 +1,140 @@
+Weight Lifting Exercises Dataset
+========================================================
+
+
+
+## Load and preprocess data
+
+First we download the files
+```{r}
+# training data set
+fileUrl1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileUrl1, destfile = "pml-training.csv", method = "curl")
+training <- read.csv("pml-training.csv")
+training <- training[,-1]
+
+# testing data set
+
+fileUrl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileUrl2, destfile = "pml-testing.csv",method = "curl")
+newdata <- read.csv("pml-testing.csv")
+newdata <- newdata[,-1]
+
+```
+The dependent variable is classe and there are a lot of many potential predictors. The first decission we take is reduce variables. We only consider valid variables the variables which have values in test data set. Anyway, this variables are the variables with very few missing values in training data
+
+```{r}
+var.without.missing <- names(newdata)[!colSums(is.na(newdata))==nrow(newdata)]
+
+summary(newdata[,var.without.missing])
+
+```
+
+We select newdata data.set and training data set only with this variables.
+
+```{r}
+newdata <- newdata[,var.without.missing]
+
+training <- training[,c(var.without.missing[-59],"classe")]
+```
+Let's to create a train1 data set and testing data test from training data set. 
+
+```{r}
+library(caret)
+
+#libraries to allow use multicores in multicore system 
+library(parallel)
+library(doMC)
+
+registerDoMC(cores = 4) # my machine has 2 cores with 2 threads
+
+id_train <- createDataPartition(training$classe, p=0.9, list=FALSE)
+
+train1 <- training[id_train,]
+testing <- training[-id_train,]
+
+```
+
+In order to process data we standardized numerical variables relate with accelerometers on the belt, forearm, arm, and dumbell.
+
+```{r}
+preStandz <- preProcess(train1[,6:58],method = c("center", "scale"))
+```
+And aplicate  to testing and newdata set.
+
+```{r}
+train1[,6:58] <- predict(preStandz, train1[,6:58])
+testing[,6:58] <- predict(preStandz, testing[,6:58])
+
+newdata[,6:58] <- predict(preStandz, newdata[,6:58])
+```
+
+
+## Building  models
+
+We use a randomForest model with 20 trees where classe is dependent variable and all remaining variables are predictors. 
+This algorithm does not affect  too much collinearity between variables. Therefore we will not use variable reduction techniques such as PCA.
+
+
+We will use k-fold cross validation with 10 folds in order to account error and acuracy in data which we don't use in building models. Once fit the model, we evaluate again the error in testing data set.
+
+```{r}
+mod.rf <- train(classe ~ .,
+                 method = "rf",
+                ntree=20,
+                 trControl=trainControl(method ="cv", allowParallel = TRUE),
+                 data=train1 )
+
+```
+
+We expect a high error in the 10 fold 
+
+## Evaluate models
+
+We can see the accuracy in the 10 fold 
+
+```{r}
+mod.rf$resample
+```
+Accuracy is the proportion of cases which the model clasify correctly. The misclass error  is 1-Accuracy. 
+Surprised by the low error rate of this kind of model. We have and excellent model.
+
+Error rates figures
+
+```{r}
+plot(mod.rf$finalModel,main="Error rates")
+legend("topright", colnames(mod.rf$finalModel$err.rate),col=1:6,cex=0.8,fill=1:6)
+```
+
+OOB error is error in *Out Of Bagging* data
+We can see the Confusion matrix in train1 and testing data.
+
+```{r}
+confusionMatrix(train1$classe,predict(mod.rf, train1))
+confusionMatrix(testing$classe,predict(mod.rf, testing))
+```
+
+The error is extremely low even in testing data set 
+```{r}
+missClass = function(values, prediction) {
+    1 - sum(diag(table(values, prediction)))/sum(table(values, prediction))
+}
+missClass(testing$classe, predict(mod.rf,testing))
+```
+
+
+The *problem* with randomForest is interpretability. We can see the relative importance of variables.
+
+varImpPlot for the most 30 important variables
+
+```{r}
+varImpPlot(mod.rf$finalModel)
+```
+
+## Predictions
+
+Now we can use our model to predict classe in a newdataset
+
+```{r}
+predict(mod.rf, newdata)
+```
